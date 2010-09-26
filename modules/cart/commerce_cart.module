@@ -1,0 +1,548 @@
+<?php
+// $Id: commerce_cart.module,v 1.50 2010/08/24 00:30:32 rszrama Exp $
+
+/**
+ * @file
+ * Implements the shopping cart system and add to cart features.
+ *
+ * In Drupal Commerce, the shopping cart is really just an order that makes
+ * special considerations to associate it with a user and
+ */
+
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_cart_menu() {
+  $items = array();
+
+  $items['cart'] = array(
+    'title' => t('Shopping cart'),
+    'page callback' => array('commerce_cart_view'),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/commerce_cart.pages.inc',
+  );
+
+  // TODO: Replace access control with something more pertinent to checkout
+  // besides 'access content'.
+  $items['checkout'] = array(
+    'title' => 'Checkout',
+    'page callback' => 'commerce_cart_checkout_router',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/commerce_cart.pages.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_commerce_order_state_info().
+ */
+function commerce_cart_commerce_order_state_info() {
+  $order_states = array();
+
+  $order_states['cart'] = (object) array(
+    'name' => 'cart',
+    'title' => t('Shopping cart'),
+    'description' => t('Orders in this state have not been completed by the customer yet.'),
+    'weight' => -5,
+    'default_status' => 'cart',
+  );
+
+  return $order_states;
+}
+
+/**
+ * Implements hook_commerce_order_status_info().
+ */
+function commerce_cart_commerce_order_status_info() {
+  $order_statuses = array();
+
+  $order_statuses['cart'] = (object) array(
+    'name' => 'cart',
+    'title' => t('Shopping cart'),
+    'state' => 'cart',
+    'cart' => TRUE,
+    'weight' => 0,
+    'status' => 1,
+  );
+
+  return $order_statuses;
+}
+
+/**
+ * Implements hook_commerce_checkout_pane_info().
+ */
+function commerce_cart_commerce_checkout_pane_info() {
+  $checkout_panes = array();
+
+  $checkout_panes['cart_contents'] = (object) array(
+    'title' => t('Shopping cart contents'),
+    'base' => 'commerce_cart_contents_pane',
+    'file' => 'includes/commerce_cart.checkout_pane.inc',
+    'page' => 'checkout',
+  );
+
+  return $checkout_panes;
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function commerce_cart_views_api() {
+  return array(
+    'api' => 2,
+    'path' => drupal_get_path('module', 'commerce_cart') . '/includes/views',
+  );
+}
+
+/**
+ * Implements hook_theme().
+ */
+function commerce_cart_theme() {
+  return array(
+    'commerce_cart_empty_block' => array(
+      'variables' => array(),
+    ),
+    'commerce_cart_empty_page' => array(
+      'variables' => array(),
+    ),
+    'commerce_cart_block' => array(
+      'variables' => array('order' => NULL, 'contents_view' => NULL),
+      'path' => drupal_get_path('module', 'commerce_cart') . '/theme',
+      'template' => 'commerce-cart-block',
+    ),
+    'commerce_cart_form_product_table' => array(
+      'render element' => 'form',
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function commerce_cart_block_info() {
+  $blocks = array();
+
+  // Define the basic shopping cart block and hide it on the checkout pages.
+  $blocks['cart'] = array(
+    'info' => t('Shopping cart'),
+    'cache' => DRUPAL_NO_CACHE,
+    'visibility' => 0,
+    'pages' => 'checkout*',
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_user_login().
+ */
+function commerce_cart_user_login(&$edit, $account) {
+  // Merge any items in the anonymous cart with the authenticated user's cart.
+
+  // Get the anonymous cart if it exists.
+  if ($anonymous_order = commerce_cart_order_load()) {
+    // If the anonymous user had any items in the cart, add them to the user's
+    // authenticated cart.
+    if (count($anonymous_order->line_items[LANGUAGE_NONE]) > 0) {
+      // Add each of the anonymous cart items to the authenticated user's cart.
+      $line_item_ids = array();
+
+      foreach ($anonymous_order->line_items[LANGUAGE_NONE] as $line_item_reference) {
+        $line_item_ids[] = $line_item_reference['line_item_id'];
+      }
+
+      foreach (commerce_line_item_load_multiple($line_item_ids) as $line_item) {
+        commerce_cart_product_add($account->uid, $line_item->product[LANGUAGE_NONE][0]['product_id'], $line_item->quantity);
+      }
+
+      // Delete the anonymous order from the database and clear the reference.
+      commerce_order_delete($anonymous_order->order_id);
+      unset($_SESSION['commerce_cart_order_id']);
+    }
+  }
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function commerce_cart_block_view($delta) {
+  global $user;
+
+  // Prepare the display of the default Shopping Cart block.
+  if ($delta == 'cart') {
+    // First check for items in the shopping cart.
+    $order = commerce_cart_order_load($user->uid);
+
+    // If the cart is empty...
+    if (!$order || empty($order->line_items)) {
+      // Display an appropriate message.
+      $content = theme('commerce_cart_empty_block');
+    }
+    else {
+      // Build the variables array to send to the cart block template.
+      $variables = array(
+        'order' => $order,
+        'contents_view' => commerce_embed_view('commerce_cart_block', 'defaults', array($order->order_id)),
+      );
+
+      $content = theme('commerce_cart_block', $variables);
+    }
+
+    return array('subject' => t('Shopping cart'), 'content' => $content);
+  }
+}
+
+/**
+ * Themes an empty shopping cart block's contents.
+ */
+function theme_commerce_cart_empty_block() {
+  return '<div class="cart-empty-block">' . t('Your shopping cart is empty.') . '</div>';
+}
+
+/**
+ * Themes an empty shopping cart page.
+ */
+function theme_commerce_cart_empty_page() {
+  return '<div class="cart-empty-page">' . t('Your shopping cart is empty.') . '</div>';
+}
+
+/**
+ * Loads the shopping cart order for the specified user.
+ *
+ * @param $customer_uid
+ *   The uid of the customer whose cart to load. If left 0, attempts to load
+ *     an anonymous order from the session.
+ *
+ * @return
+ *   The fully loaded shopping cart order or FALSE if non-existent.
+ */
+function commerce_cart_order_load($customer_uid = 0) {
+  // Loaded orders will be cached keyed by $customer_uid.
+  $cart_orders = &drupal_static(__FUNCTION__);
+
+  // First return the cached order if it has been loaded already.
+  if (!isset($cart_orders[$customer_uid])) {
+    $order_id = FALSE;
+
+    // If a customer uid was specified...
+    if ($customer_uid) {
+      // Create an array of valid shopping cart order statuses.
+      $status_ids = array_keys(commerce_order_statuses(array('cart' => TRUE)));
+
+      // Look for the user's most recent shopping cart order, although they
+      // should never really have more than one.
+      $order_id = db_query('SELECT order_id FROM {commerce_order} WHERE customer_uid = :customer_uid AND status IN (:status_ids) ORDER BY order_id DESC', array(':customer_uid' => $customer_uid, ':status_ids' => $status_ids))->fetchField();
+    }
+    else {
+      // Otherwise look for a shopping cart order ID in the session.
+      if (!empty($_SESSION['commerce_cart_order_id'])) {
+        $order_id = $_SESSION['commerce_cart_order_id'];
+      }
+    }
+
+    // If a valid order ID was found, load the order now.
+    if ($order_id) {
+      $cart_orders[$customer_uid] = commerce_order_load($order_id);
+    }
+    else {
+      $cart_orders[$customer_uid] = FALSE;
+    }
+  }
+
+  return $cart_orders[$customer_uid];
+}
+
+/**
+ * Resets the cached array of shopping cart orders.
+ */
+function commerce_cart_orders_reset() {
+  $cart_orders = &drupal_static('commerce_cart_order_load');
+  $cart_orders = NULL;
+}
+
+/**
+ * Creates a new shopping cart order for the specified user.
+ *
+ * @param $customer_uid
+ *   The uid of the user for whom to create the order. If left 0, the order will
+ *     be created for the current user and associated with his or her session.
+ *
+ * @return
+ *   The newly created shopping cart order object.
+ */
+function commerce_cart_order_new($customer_uid = 0) {
+  // Create the new order with the customer's uid and the cart order status.
+  $order = commerce_order_new($customer_uid, 'cart');
+  $order->log = t('Created as a shopping cart order.');
+
+  // Save it so it gets an order ID and return the full object.
+  $order = commerce_order_save($order);
+
+  // Reset the cart cache
+  commerce_cart_orders_reset();
+
+  // If the user is not logged in, ensure the order ID is stored in the session.
+  if (!$customer_uid && empty($_SESSION['commerce_cart_order_id'])) {
+    $_SESSION['commerce_cart_order_id'] = $order->order_id;
+  }
+
+  return $order;
+}
+
+/**
+ * Adds the specified product to a customer's shopping cart.
+ *
+ * @param $customer_uid
+ *   The uid of the user whose cart you are adding the product to.
+ * @param $product_id
+ *   The ID of the product to add to the cart.
+ * @param $quantity
+ *   The quantity of this product to add to the cart.
+ *
+ * @return
+ *   The entire shopping cart order object or FALSE on failure.
+ */
+function commerce_cart_product_add($customer_uid, $product_id, $quantity) {
+  // Load and validate the specified product ID.
+  $product = commerce_product_load($product_id);
+
+  // Fail if the product does not exist or is disabled.
+  if (empty($product) || !$product->status) {
+    return FALSE;
+  }
+
+  // First attempt to load the customer's shopping cart order.
+  $order = commerce_cart_order_load($customer_uid);
+
+  // If no order existed, create one now.
+  if (empty($order)) {
+    $order = commerce_cart_order_new($customer_uid);
+  }
+
+  // Determine if the product already exists on the order and increment its
+  // quantity instead of adding a new line if it does.
+  $line_item_match = NULL;
+
+  // If the order has line items on it...
+  if (!empty($order->line_items)) {
+    $line_item_ids = array();
+
+    // Build an array of the line item IDs.
+    foreach ($order->line_items[LANGUAGE_NONE] as $line_item_reference) {
+      $line_item_ids[] = $line_item_reference['line_item_id'];
+    }
+
+    // Loop through the line items looking for products.
+    foreach (commerce_line_item_load_multiple($line_item_ids) as $line_item) {
+      // If this line item matches the product being added...
+      if (empty($line_item_match) &&
+          $line_item->type == 'product' &&
+          $line_item->product[LANGUAGE_NONE][0]['product_id'] == $product_id) {
+        // Exit this loop with the $line_item intact so it gets updated.
+        $line_item_match = clone($line_item);
+      }
+    }
+  }
+
+  // If no matching line item was found...
+  if (empty($line_item_match)) {
+    // Create the new product line item.
+    $line_item = commerce_product_line_item_new($product, $quantity);
+
+    // Add it to the order's line item reference value.
+    $order->line_items[LANGUAGE_NONE][] = array(
+      'line_item_id' => $line_item->line_item_id,
+    );
+
+    // Save the updated order.
+    commerce_order_save($order);
+  }
+  else {
+    // Increment the quantity of the line item and save it.
+    $line_item_match->quantity += $quantity;
+
+    commerce_line_item_save($line_item_match);
+  }
+
+  // Return the order.
+  return $order;
+}
+
+/**
+ * Builds an appropriate cart form ID based on the products on the form.
+ *
+ * @see commerce_cart_forms().
+ */
+function commerce_cart_add_to_cart_form_id($product_ids, $qty = 0) {
+  return 'commerce_cart_add_to_cart_form_' . implode('_', $product_ids);
+}
+
+/**
+ * Implements hook_forms().
+ *
+ * To provide distinct form IDs for add to cart forms, the product IDs
+ * referenced by the form are appended to the base ID,
+ * commerce_cart_add_to_cart_form. When such a form is built or submitted, this
+ * function will return the proper callback function to use for the given form.
+ */
+function commerce_cart_forms($form_id, $args) {
+  $forms = array();
+
+  // Construct a valid cart form ID from the arguments.
+  if (strpos($form_id, 'commerce_cart_add_to_cart_form_') === 0) {
+    $forms[$form_id] = array(
+      'callback' => 'commerce_cart_add_to_cart_form',
+    );
+  }
+
+  return $forms;
+}
+
+/**
+ * Builds an Add to Cart form for a set of products.
+ *
+ * @param $product_ids
+ *   An array of product IDs that will be included in the form.
+ * @param $quantity
+ *   The default quantity to place in the quantity textfield; leave 0 to default
+ *     to a hidden quantity textfield with a value of 1.
+ *
+ * @return
+ *   The form array.
+ */
+function commerce_cart_add_to_cart_form($form, &$form_state, $product_ids, $quantity = 0) {
+  global $user;
+
+  // Store the customer uid in the form so other modules can override with a
+  // selection widget if necessary.
+  $form['customer_uid'] = array(
+    '#type' => 'value',
+    '#value' => $user->uid,
+  );
+
+  // Load all the products intended for sale on this form.
+  $products = commerce_product_load_multiple($product_ids);
+
+  // If no products were returned...
+  if (count($products) == 0) {
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Product not available'),
+      '#disabled' => TRUE,
+    );
+  }
+  else {
+    $form_state['products'] = $products;
+
+    if (count($products) == 1) {
+      $form['product_id'] = array(
+        '#type' => 'hidden',
+        '#value' => array_shift(array_keys($products)),
+      );
+    }
+    else {
+      $options = array();
+
+      foreach ($products as $product_id => $product) {
+        $options[$product_id] = check_plain($product->title);
+      }
+
+      $form['product_id'] = array(
+        '#type' => 'select',
+        '#options' => $options,
+      );
+    }
+
+    // If a quantity greater than 0 is specified, present a quantity selector as
+    // a textfield with the value as the default.
+    if ($quantity > 0) {
+      $form['quantity'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Quantity'),
+        '#default_value' => $quantity,
+        '#size' => 5,
+      );
+    }
+    else {
+      $form['quantity'] = array(
+        '#type' => 'hidden',
+        '#value' => 1,
+      );
+    }
+
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Add to cart'),
+    );
+  }
+
+  // Add the handlers manually since we're using hook_forms() to associate this
+  // form with form IDs based on the $product_ids.
+  $form['#validate'][] = 'commerce_cart_add_to_cart_form_validate';
+  $form['#submit'][] = 'commerce_cart_add_to_cart_form_submit';
+
+  return $form;
+}
+
+/**
+ * Form validate handler: validate the product and quantity to add to the cart.
+ */
+function commerce_cart_add_to_cart_form_validate($form, &$form_state) {
+  if (!is_numeric($form_state['values']['quantity']) || $form_state['values']['quantity'] <= 0) {
+    form_set_error('quantity', t('You must specify a valid quantity to add to the cart.'));
+  }
+}
+
+/**
+ * Form submit handler: add the selected product to the cart.
+ */
+function commerce_cart_add_to_cart_form_submit($form, &$form_state) {
+  $product_id = $form_state['values']['product_id'];
+  $product = $form_state['products'][$product_id];
+
+  // Add the product to the specified shopping cart.
+  commerce_cart_product_add($form_state['values']['customer_uid'], $product_id, $form_state['values']['quantity']);
+
+  drupal_set_message(t('%title added to <a href="!cart-url">your cart</a>.', array('%title' => $product->title, '!cart-url' => url('cart'))));
+}
+
+/**
+ * Implements hook_field_formatter_info().
+ */
+function commerce_cart_field_formatter_info() {
+  return array(
+    'commerce_cart_add_to_cart_form' => array(
+      'label' => t('Add to Cart form'),
+      'description' => t('Display an Add to Cart form for the referenced product.'),
+      'field types' => array('commerce_product_reference'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function commerce_cart_field_formatter_view($entity_type, $object, $field, $instance, $langcode, $items, $display) {
+  $result = array();
+
+  // Collect the list of product IDs.
+  $product_ids = array();
+
+  foreach ($items as $delta => $item) {
+    $product_ids[$item['product_id']] = $item['product_id'];
+  }
+
+  switch ($display['type']) {
+    case 'commerce_cart_add_to_cart_form':
+      $result[0] = array(
+         '#markup' => drupal_render(drupal_get_form(commerce_cart_add_to_cart_form_id($product_ids), $product_ids)),
+       );
+      break;
+  }
+
+  return $result;
+}

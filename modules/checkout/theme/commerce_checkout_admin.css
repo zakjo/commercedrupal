@@ -1,0 +1,21 @@
+/* $Id: commerce_checkout_admin.css,v 1.2 2010/05/20 04:08:50 rszrama Exp $ */
+
+#panes td.page {
+  font-weight: bold;
+}
+
+#panes tr.page-header {
+  vertical-align: bottom;
+  font-weight: bold;
+  background-color: #FFF;
+}
+
+#panes tr.page-message {
+  font-weight: normal;
+  font-style: italic;
+  color: #999;
+}
+
+#panes tr.page-populated {
+  display: none;
+}

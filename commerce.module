@@ -1,0 +1,319 @@
+<?php
+// $Id: commerce.module,v 1.26 2010/09/09 20:42:07 rszrama Exp $
+
+/**
+ * @file
+ * Defines features and functions common to the Commerce modules.
+ */
+
+
+/**
+ * Implements hook_permission().
+ */
+function commerce_permission() {
+  $permissions = array(
+    'configure store' => array(
+      'title' => t('Configure store settings'),
+      'description' => t('Allows users to update store currency and contact settings.'),
+      'restrict access' => TRUE,
+    ),
+  );
+
+  return $permissions;
+}
+
+/**
+ * Finds all fields of a particular field type.
+ *
+ * @param $field_type
+ *   The type of field to search for.
+ * @param $entity_type
+ *   Optional entity type to restrict the search to.
+ *
+ * @return
+ *   An array of the matching fields keyed by the field name.
+ */
+function commerce_info_fields($field_type, $entity_type = NULL) {
+  $fields = array();
+
+  // Loop through the fields looking for any product reference fields.
+  foreach (field_info_fields() as $field_name => $field) {
+    if ($field['type'] == $field_type) {
+      // Add this field to the return array if no entity type was specified or
+      // if the specified type exists in the field's bundles array.
+      if (empty($entity_type) || in_array($entity_type, array_keys($field['bundles']))) {
+        $fields[$field_name] = $field;
+      }
+    }
+  }
+
+  return $fields;
+}
+
+/**
+ * Sorts an array of objects by weight through uasort().
+ *
+ * For sorting arrays of associative arrays, use drupal_sort_weight().
+ */
+function commerce_sort_weight($a, $b) {
+  $a_weight = (is_object($a) && isset($a->weight)) ? $a->weight : 0;
+  $b_weight = (is_object($b) && isset($b->weight)) ? $b->weight : 0;
+  if ($a_weight == $b_weight) {
+    return 0;
+  }
+  return ($a_weight < $b_weight) ? -1 : 1;
+}
+
+/**
+ * Makes any required form elements in a form unrequired.
+ *
+ * @param $form
+ *   The form array to search for required elements.
+ */
+function commerce_unrequire_form_elements(&$form) {
+  array_walk_recursive($form, '_commerce_unrequire_element');
+}
+
+/**
+ * array_walk_recursive callback: makes an individual element unrequired.
+ *
+ * @param &$value
+ *   The value of the form array being walked.
+ * @param $key
+ *   The key of the form array corresponding to the present value.
+ */
+function _commerce_unrequire_element(&$value, $key) {
+  if ($key === '#required') {
+    $value = FALSE;
+  }
+}
+
+/**
+ * Returns the callback for a form ID as defined by hook_forms().
+ *
+ * @param $form_id
+ *   The form ID to find the callback for.
+ * @return
+ *   A string containing the form's callback function name.
+ *
+ * @see drupal_retrieve_form()
+ * @see hook_forms()
+ */
+function commerce_form_callback($form_id, $form_state) {
+  // If a function named after the $form_id does not exist, look for its
+  // definition in hook_forms().
+  if (!function_exists($form_id)) {
+    $forms = &drupal_static(__FUNCTION__);
+
+    // In cases where many form_ids need to share a central builder function,
+    // such as the product editing form, modules can implement hook_forms(). It
+    // maps one or more form_ids to the correct constructor functions.
+    if (!isset($forms) || !isset($forms[$form_id])) {
+      $forms = module_invoke_all('forms', $form_id, $form_state['build_info']['args']);
+    }
+
+    if (isset($forms[$form_id]['callback'])) {
+      return $forms[$form_id]['callback'];
+    }
+  }
+
+  return $form_id;
+}
+
+/**
+ * Renders a View for display in some other element.
+ *
+ * @param $view_key
+ *   The ID of the View to embed.
+ * @param $display_id
+ *   The ID of the display of the View that will actually be rendered.
+ * @param $arguments
+ *   An array of arguments to pass to the View.
+ *
+ * @return
+ *   The rendered output of the chosen View display.
+ */
+function commerce_embed_view($view_id, $display_id, $arguments) {
+  // Load the cart line item View.
+  $view = views_get_view($view_id);
+  $view->set_display($display_id);
+
+  // Set the specific line items for this order.
+  $view->set_arguments($arguments);
+
+  // Prepare and execute the View query.
+  $view->pre_execute();
+  $view->execute();
+
+  // Return the rendered View.
+  return $view->render();
+}
+
+/**
+ * Returns the e-mail address from which to send commerce related e-mails.
+ *
+ * Currently this is just using the site's e-mail address, but this may be
+ * updated to use a specific e-mail address when we add a settings form for the
+ * store's physical address and contact information.
+ */
+function commerce_email_from() {
+  return variable_get('site_mail', ini_get('sendmail_from'));
+}
+
+/**
+ * Returns a single currency object.
+ *
+ * @param $currency_code
+ *   The code of the currency to return or NULL to return the default currency.
+ *
+ * @return
+ *   The specified currency object or FALSE if it does not exist.
+ */
+function commerce_currency_load($currency_code = NULL) {
+  $currencies = commerce_currencies();
+
+  // Check to see if we should return the default currency.
+  if (empty($currency_code)) {
+    $currency_code = variable_get('commerce_default_currency', 'USD');
+  }
+
+  return isset($currencies[$currency_code]) ? $currencies[$currency_code] : FALSE;
+}
+
+/**
+ * Returns an array of all available currencies.
+ *
+ * @param $enabled
+ *   Boolean indicating whether or not to return only enabled currencies.
+ *
+ * @return
+ *   An array of altered currency objects keyed by the currency code.
+ */
+function commerce_currencies($enabled = FALSE) {
+  $currencies = &drupal_static(__FUNCTION__);
+
+  if (empty($currencies)) {
+    // Establish some default values for currencies.
+    $defaults = array(
+      'symbol' => '',
+      'fraction_name' => '',
+      'decimals' => 2,
+      'thousands_separator' => ',',
+      'decimal_separator' => '.',
+      'symbol_placement' => '',
+      'code_placement' => '',
+      'format_callback' => '',
+    );
+
+    // TODO: Expand to include all currencies per http://drupal.org/node/731604.
+    // Define base currencies.
+    $currencies = array(
+      'EUR' => array(
+        'numeric_code' => 978,
+        'code' => 'EUR',
+        'name' => t('Euro'),
+        'symbol' => '€',
+        'fraction_name' => t('Cent'),
+        'decimal_separator' => ',',
+        'thousands_separator' => ' ',
+        'symbol_placement' => 'after',
+      ),
+      'USD' => array (
+        'numeric_code' => 840,
+        'code' => 'USD',
+        'name' => t('United States Dollars'),
+        'symbol' => '$',
+        'fraction_name' => t('Cent'),
+        'symbol_placement' => 'before',
+      ),
+    );
+
+    // Add default values if they don't exist and convert to objects.
+    foreach ($currencies as $currency_code => $currency) {
+      $currencies[$currency_code] = (object) array_merge($defaults, $currency);
+    }
+
+    // Allow other modules to modify the currency list.
+    drupal_alter('commerce_currency_info', $currencies);
+  }
+
+  // Return only enabled currencies if specified.
+  if ($enabled) {
+    // Form an array of enabled currencies based on the variable set by the
+    // checkboxes element on the currency settings form.
+    $enabled_currencies = array_diff(array_values(variable_get('commerce_enabled_currencies', array('USD' => 'USD'))), array(0));
+
+    return array_intersect_key($currencies, drupal_map_assoc($enabled_currencies));
+  }
+
+  return $currencies;
+}
+
+/**
+ * Returns the symbol of any or all currencies.
+ *
+ * @param $code
+ *   Optional parameter specifying the code of the currency whose symbol to return.
+ *
+ * @return
+ *   Either an array of all currency symbols keyed by the currency code or a
+ *     string containing the symbol for the specified currency. If a currency is
+ *     specified that does not exist, this function returns FALSE.
+ */
+function commerce_currency_get_symbol($currency_code = NULL) {
+  $currencies = commerce_currencies();
+
+  // Return a specific currency symbol if specified.
+  if (!empty($currency_code)) {
+    if (isset($currencies[$currency_code])) {
+      return $currencies[$currency_code]->symbol;
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  // Otherwise turn the array values into the type name only.
+  foreach ($currencies as $currency_code => $currency) {
+    $currencies[$currency_code] = $currency->symbol;
+  }
+
+  return $currencies;
+}
+
+/**
+ * Formats a price for a particular currency.
+ *
+ * @param $price
+ *   A numeric price value.
+ * @param $currency_code
+ *   The three character code of the currency.
+ * @param $object
+ *   When present, the object to which the price is attached.
+ *
+ * @return
+ *   A fully formatted currency.
+ */
+function commerce_currency_format($price, $currency_code, $object = NULL) {
+  // First load the full currency object.
+  $currency = commerce_currency_load($currency_code);
+
+  // Invoke the custom format callback if specified.
+  if (!empty($currency->format_callback)) {
+    return $currency->format_callback($price, $currency, $entity);
+  }
+
+  // Format the price as a number.
+  $price = number_format(round($price, $currency->decimals), $currency->decimals, $currency->decimal_separator, $currency->thousands_separator);
+
+  // Establish the replacement values to format this price for its currency.
+  $replacements = array(
+    '@code_before' => $currency->code_placement == 'before' ? $currency->code : '',
+    '@symbol_before' => $currency->symbol_placement == 'before' ? $currency->symbol : '',
+    '@price' => $price,
+    '@symbol_after' => $currency->symbol_placement == 'after' ? $currency->symbol : '',
+    '@code_after' => $currency->code_placement == 'after' ? $currency->code : '',
+  );
+
+  return t('@code_before @symbol_before@price @symbol_after @code_after', $replacements);
+}

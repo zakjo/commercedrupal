@@ -1,0 +1,151 @@
+<?php
+// $Id: commerce_payment.module,v 1.9 2010/09/20 10:45:28 rszrama Exp $
+
+/**
+ * @file
+ * Defines the payment system and checkout integration.
+ */
+
+/**
+ * Implements hook_commerce_checkout_page_info().
+ */
+function commerce_payment_commerce_checkout_page_info() {
+  $checkout_pages = array();
+
+  $checkout_pages['payment'] = (object) array(
+    'title' => t('Payment'),
+    'help' => t('Use the button below to proceed to the payment server.'),
+    'status_cart' => FALSE,
+    'locked' => TRUE,
+    'buttons' => FALSE,
+    'weight' => 20,
+  );
+
+  return $checkout_pages;
+}
+
+/**
+ * Implements hook_commerce_checkout_pane_info().
+ */
+function commerce_payment_commerce_checkout_pane_info() {
+  $checkout_panes = array();
+
+  $checkout_panes['commerce_payment'] = (object) array(
+    'title' => t('Payment'),
+    'page' => 'review',
+    'locked' => TRUE,
+    'file' => 'includes/commerce_payment.checkout_pane.inc',
+    'base' => 'commerce_payment_pane',
+    'weight' => 10,
+  );
+
+  $checkout_panes['commerce_payment_redirect'] = (object) array(
+    'title' => t('Off-site payment redirect'),
+    'page' => 'payment',
+    'locked' => TRUE,
+    'file' => 'includes/commerce_payment.checkout_pane.inc',
+    'base' => 'commerce_payment_redirect_pane',
+  );
+
+  return $checkout_panes;
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function commerce_payment_views_api() {
+  return array(
+    'api' => 2,
+    'path' => drupal_get_path('module', 'commerce_payment') . '/includes/views',
+  );
+}
+
+/**
+ * Returns an array of payment methods defined by enabled modules.
+ *
+ * @return
+ *   An associative array of payment method objects keyed by the method_id.
+ */
+function commerce_payment_methods() {
+  $payment_methods = &drupal_static(__FUNCTION__);
+
+  // If the payment methods haven't been defined yet, do so now.
+  if (!isset($payment_methods)) {
+    $payment_methods = module_invoke_all('commerce_payment_method_info');
+    drupal_alter('commerce_payment_method_info', $payment_methods);
+
+    foreach ($payment_methods as $method_id => &$payment_method) {
+      $defaults = array(
+        'method_id' => $method_id,
+        'base' => $method_id,
+        'title' => '',
+        'description' => '',
+        'offsite' => FALSE,
+        'callbacks' => array(),
+      );
+
+      $payment_methods[$method_id] = (object) ((array) $payment_method + $defaults);
+
+      // Merge in default callbacks.
+      foreach (array('settings', 'submit_form', 'submit_form_validate', 'submit_form_submit', 'redirect_form', 'redirect_form_validate', 'redirect_form_submit') as $callback) {
+        if (!isset($payment_method->callbacks[$callback])) {
+          $payment_method->callbacks[$callback] = $payment_method->base . '_' . $callback;
+        }
+      }
+    }
+  }
+
+  return $payment_methods;
+}
+
+/**
+ * Returns a payment method object.
+ *
+ * @param $method_id
+ *   The ID of the payment method to return.
+ *
+ * @return
+ *   The fully loaded payment method object or FALSE if not found.
+ */
+function commerce_payment_method_load($method_id) {
+  $payment_methods = commerce_payment_methods();
+  return isset($payment_methods[$method_id]) ? $payment_methods[$method_id] : FALSE;
+}
+
+/**
+ * Returns a payment method instance object which includes the settings specific
+ *   to the context of the instance.
+ *
+ * @param $instance_id
+ *   A payment method instance ID in the form of a pipe delimited string
+ *     containing the method_id and the enabling Rule's name.
+ *
+ * @return
+ *   The payment method instance object which is identical to the payment method
+ *     object with the addition of the settings array.
+ */
+function commerce_payment_method_instance_load($instance_id) {
+  // Explode the method key into its component parts.
+  list($method_id, $rule_name) = explode('|', $instance_id);
+
+  // First load the payment method and add the instance ID.
+  $payment_method = commerce_payment_method_load($method_id);
+  $payment_method->instance_id = $instance_id;
+
+  // Then load the Rule configuration that enables the method.
+  $rule = rules_config_load($rule_name);
+
+  // Iterate over its actions to find one with the matching element ID and pull
+  // its settings into the payment method object.
+  $payment_method->settings = array();
+
+  foreach ($rule->actions() as $action) {
+    if ($action->getElementName() == 'commerce_payment_enable_' . $method_id) {
+      if (is_array($action->settings['payment_method']) && !empty($action->settings['payment_method']['settings'])) {
+        $payment_method->settings = $action->settings['payment_method']['settings'];
+      }
+    }
+  }
+
+  return $payment_method;
+}

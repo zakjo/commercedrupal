@@ -1,0 +1,863 @@
+<?php
+// $Id: commerce_order.module,v 1.31 2010/09/20 10:48:08 rszrama Exp $
+
+/**
+ * @file
+ * Defines the core Commerce order entity and API functions to manage orders and
+ * interact with them.
+ */
+
+/**
+ * Implements hook_entity_info().
+ */
+function commerce_order_entity_info() {
+  $return = array(
+    'commerce_order' => array(
+      'label' => t('Order'),
+      'controller class' => 'CommerceOrderEntityController',
+      'base table' => 'commerce_order',
+      'revision table' => 'commerce_order_revision',
+      'fieldable' => TRUE,
+      'entity keys' => array(
+        'id' => 'order_id',
+        'revision' => 'revision_id',
+      ),
+      'bundles' => array(
+        'commerce_order' => array(
+          'label' => t('Order'),
+        ),
+      ),
+      'load hook' => 'commerce_order_load',
+      'view modes' => array(
+        'administrator' => array(
+          'label' => t('Administrator'),
+          'custom settings' => FALSE,
+        ),
+        'customer' => array(
+          'label' => t('Customer'),
+          'custom settings' => FALSE,
+        ),
+      ),
+      'creation callback' => '_commerce_order_create',
+      'save callback' => 'commerce_order_save',
+      'deletion callback' => 'commerce_order_delete',
+      'access callback' => 'commerce_order_access',
+    ),
+  );
+
+  return $return;
+}
+
+/**
+ * Implements hook_field_extra_fields().
+ */
+function commerce_order_field_extra_fields() {
+  $extra = array();
+
+  $extra['commerce_order']['commerce_order'] = array(
+    'form' => array(
+      'customer' => array(
+        'label' => t('Customer'),
+        'description' => t('Order module Customer information fieldset'),
+        'weight' => 15,
+      ),
+      'creator' => array(
+        'label' => t('Creation information'),
+        'description' => t('Order module Creation date / user fieldset'),
+        'weight' => 20,
+      ),
+    ),
+  );
+
+  return $extra;
+}
+
+/**
+ * Implements hook_enable().
+ */
+function commerce_order_enable() {
+  // Add the line item reference field to the default order type.
+  commerce_order_configure_order_type();
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function commerce_order_views_api() {
+  return array(
+    'api' => 2,
+    'path' => drupal_get_path('module', 'commerce_order') . '/includes/views',
+  );
+}
+
+/**
+ * Implements hook_permission().
+ */
+function commerce_order_permission() {
+  $permissions = array(
+    'administer orders' => array(
+      'title' => t('Administer orders'),
+      'restrict access' => TRUE,
+    ),
+    'access orders' => array(
+      'title' => t('Access lists of orders, primarily for viewing and referencing'),
+      'restrict access' => TRUE,
+    ),
+    'create orders' => array(
+      'title' => t('Create orders'),
+      'restrict access' => TRUE,
+    ),
+    'edit any order' => array(
+      'title' => t('Edit any order'),
+      'restrict access' => TRUE,
+    ),
+    'edit own orders' => array(
+      'title' => t('Edit own orders'),
+      'restrict access' => TRUE,
+    ),
+  );
+
+  return $permissions;
+}
+
+/**
+ * Implements hook_commerce_order_state_info().
+ */
+function commerce_order_commerce_order_state_info() {
+  $order_states = array();
+
+  $order_states['canceled'] = (object) array(
+    'name' => 'canceled',
+    'title' => t('Canceled'),
+    'description' => t('Orders in this state have been canceled through some user action.'),
+    'weight' => -10,
+    'default_status' => 'canceled',
+  );
+  $order_states['pending'] = (object) array(
+    'name' => 'pending',
+    'title' => t('Pending'),
+    'description' => t('Orders in this state have been created and are awaiting further action.'),
+    'weight' => 0,
+    'default_status' => 'pending',
+  );
+  $order_states['completed'] = (object) array(
+    'name' => 'complete',
+    'title' => t('Completed'),
+    'description' => t('Orders in this state have been completed as far as the customer is concerned.'),
+    'weight' => 10,
+    'default_status' => 'complete',
+  );
+
+  return $order_states;
+}
+
+/**
+ * Implements hook_commerce_order_status_info().
+ */
+function commerce_order_commerce_order_status_info() {
+  $order_statuses = array();
+
+  $order_statuses['canceled'] = (object) array(
+    'name' => 'canceled',
+    'title' => t('Canceled'),
+    'state' => 'canceled',
+    'weight' => 0,
+    'status' => 1,
+  );
+  $order_statuses['pending'] = (object) array(
+    'name' => 'pending',
+    'title' => t('Pending'),
+    'state' => 'pending',
+    'weight' => 0,
+    'status' => 1,
+  );
+  $order_statuses['completed'] = (object) array(
+    'name' => 'completed',
+    'title' => t('Completed'),
+    'state' => 'completed',
+    'weight' => 0,
+    'status' => 1,
+  );
+
+  return $order_statuses;
+}
+
+
+/**
+ * Returns an initialized order object.
+ *
+ * @param $customer_uid
+ *   The uid of the customer the order is for.
+ *
+ * @return
+ *   An order object with all default fields initialized.
+ */
+function commerce_order_new($customer_uid = 0, $status = '') {
+  // If no status was specified, use the default Pending status.
+  if (empty($status)) {
+    $order_state = commerce_order_state_load('pending');
+    $status = $order_state->default_status;
+  }
+
+  return entity_get_controller('commerce_order')->create($customer_uid, $status);
+}
+
+/**
+ * Creation callback for the Entity Metadata module.
+ */
+function _commerce_order_create($values = array()) {
+  // Create a new order for the specified customer.
+  $order = commerce_order_new($values['customer_uid']);
+  unset($values['customer_uid']);
+
+  $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  foreach ($values as $name => $value) {
+    $wrapper->$name->set($value);
+  }
+
+  return $wrapper;
+}
+
+/**
+ * Saves an order.
+ *
+ * @param $order
+ *   The full order object to save. If $order->order_id is empty, a new order
+ *     will be created.
+ *
+ * @return
+ *   The saved order object.
+ */
+function commerce_order_save($order) {
+  return entity_get_controller('commerce_order')->save($order);
+}
+
+/**
+ * Loads an order by ID.
+ */
+function commerce_order_load($order_id) {
+  $orders = commerce_order_load_multiple(array($order_id), array());
+  return $orders ? reset($orders) : FALSE;
+}
+
+/**
+ * Loads an order by number.
+ */
+function commerce_order_load_by_number($order_number) {
+  $orders = commerce_order_load_multiple(array(), array('order_number' => $order_number));
+  return $orders ? reset($orders) : FALSE;
+}
+
+/**
+ * Loads multiple orders by ID or based on a set of matching conditions.
+ *
+ * @see entity_load()
+ *
+ * @param $order_ids
+ *   An array of order IDs.
+ * @param $conditions
+ *   An array of conditions on the {commerce_order} table in the form
+ *     'field' => $value.
+ * @param $reset
+ *   Whether to reset the internal order loading cache.
+ *
+ * @return
+ *   An array of order objects indexed by order_id.
+ */
+function commerce_order_load_multiple($order_ids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('commerce_order', $order_ids, $conditions, $reset);
+}
+
+/**
+ * Generate an array for rendering the given order.
+ *
+ * @param $order
+ *   A fully loaded order object.
+ * @param $view_mode
+ *   The view mode for displaying the order, 'administrator' or 'customer'.
+ *
+ * @return
+ *   An array as expected by drupal_render().
+ */
+function commerce_order_build_content($order, $view_mode = 'administrator') {
+  // Populate $order->content with a render() array.
+  // Remove previously built content, if it exists.
+  $order->content = array();
+
+  // Build fields content.
+  field_attach_prepare_view('commerce_order', array($order->order_id => $order), $view_mode);
+  entity_prepare_view('commerce_order', array($order->order_id => $order));
+  $order->content += field_attach_view('commerce_order', $order, $view_mode);
+
+  // Allow modules to make their own additions to the order content.
+  module_invoke_all('commerce_order_view', $order, $view_mode);
+
+  // Remove the content array from the order to avoid duplicate rendering.
+  $build = $order->content;
+  unset($order->content);
+
+  $build += array(
+    '#theme' => 'commerce_order',
+    '#order' => $order,
+    '#view_mode' => $view_mode,
+  );
+
+  // Allow modules to modify the final build array.
+  drupal_alter('commerce_order_view', $build);
+
+  return $build;
+}
+
+/**
+ * Deletes an order by ID.
+ *
+ * @param $order_id
+ *   The ID of the order to delete.
+ *
+ * @return
+ *   TRUE on success, FALSE otherwise.
+ */
+function commerce_order_delete($order_id) {
+  return commerce_order_delete_multiple(array($order_id));
+}
+
+/**
+ * Deletes multiple orders by ID.
+ *
+ * @param $order_ids
+ *   An array of order IDs to delete.
+ *
+ * @return
+ *   TRUE on success, FALSE otherwise.
+ */
+function commerce_order_delete_multiple($order_ids) {
+  return entity_get_controller('commerce_order')->delete($order_ids);
+}
+
+/**
+ * Checks order access for various operations.
+ *
+ * @param $op
+ *   The operation being performed. One of 'view', 'update', 'create' or
+ *   'delete'.
+ * @param $order
+ *   Optionally an order to check access for.
+ * @param $account
+ *   The user to check for. Leave it to NULL to check for the current user.
+ */
+function commerce_order_access($op, $order = NULL, $account = NULL) {
+  global $user;
+  $account = isset($account) ? $account : $user;
+
+  if (user_access('administer orders', $account)) {
+    return TRUE;
+  }
+
+  if ($op == 'view' && user_access('access orders', $account)) {
+    return TRUE;
+  }
+
+  if ($op == 'create' && user_access('create orders', $account)) {
+    return TRUE;
+  }
+
+  if (isset($order) && ($op == 'update' || $op == 'delete')) {
+    if (user_access('edit any order')) {
+      return TRUE;
+    }
+
+    // Others either don't have any access or must match the order uid.
+    if ($account->uid && user_access('edit own orders', $account) && $order->creator_uid == $account->uid) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Performs token replacement on an order number for valid tokens only.
+ *
+ * TODO: This function currently limits acceptable Tokens to Order ID with no
+ * ability to use Tokens for the Fields attached to the order. That might be
+ * fine for a core Token replacement, but we should at least open the
+ * $valid_tokens array up to other modules to enable various Tokens for use.
+ *
+ * @param $order_number
+ *   The raw order number string including any tokens as entered.
+ * @param $order
+ *   An order object used to perform token replacement on the number.
+ *
+ * @return
+ *   The number with tokens replaced or FALSE if it included invalid tokens.
+ */
+function commerce_order_replace_number_tokens($order_number, $order) {
+  // Build an array of valid order number tokens.
+  $valid_tokens = array('order-id');
+
+  // Ensure that only valid tokens were used.
+  $invalid_tokens = FALSE;
+
+  foreach (token_scan($order_number) as $type => $token) {
+    if ($type !== 'order') {
+      $invalid_tokens = TRUE;
+    }
+    else {
+      foreach (array_keys($token) as $value) {
+        if (!in_array($value, $valid_tokens)) {
+          $invalid_tokens = TRUE;
+        }
+      }
+    }
+  }
+
+  // Register the error if an invalid token was detected.
+  if ($invalid_tokens) {
+    return FALSE;
+  }
+
+  return $order_number;
+}
+
+/**
+ * Validates an order number string for acceptable characters.
+ *
+ * @param $order_number
+ *   The order number string to validate.
+ *
+ * @return
+ *   TRUE or FALSE indicating whether or not the order number contains valid
+ *     characters.
+ */
+function commerce_order_validate_number_characters($order_number) {
+  return preg_match('!^[A-Za-z0-9_-]+$!', $order_number);
+}
+
+/**
+ * Checks to see if a given order number already exists for another order.
+ *
+ * @param $order_number
+ *   The string to match against existing order numbers.
+ * @param $order_id
+ *   The ID of the order the number is for; an empty value represents the number
+ *     is meant for a new order.
+ *
+ * @return
+ *   TRUE or FALSE indicating whether or not the number exists for another
+ *     order.
+ */
+function commerce_order_validate_number_unique($order_number, $order_id) {
+  // Look for an ID of an order matching the supplied number.
+  if ($match_id = db_query('SELECT order_id FROM {commerce_order} WHERE order_number = :order_number', array(':order_number' => $order_number))->fetchField()) {
+    // If this number is supposed to be for a new order or an order other than
+    // the one that matched...
+    if (empty($order_id) || $match_id != $order_id) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
+/**
+ * Returns an array of all the order states keyed by name.
+ *
+ * Order states can only be defined by modules but may have settings overridden
+ * that are stored in the database (weight and the default status). When this
+ * function is first called, it will load all the states as defined by
+ * hook_commerce_order_state_info() and update them based on the data in the
+ * database. The final array will be cached for subsequent calls.
+ */
+function commerce_order_states() {
+  // First check the static cache for an order states array.
+  $order_states = &drupal_static(__FUNCTION__);
+
+  // If it did not exist, fetch the statuses now.
+  if (empty($order_states)) {
+    $order_states = module_invoke_all('commerce_order_state_info');
+
+    $saved_states = db_query('SELECT * FROM {commerce_order_state}')->fetchAllAssoc('name');
+
+    foreach ((array) $saved_states as $name => $data) {
+      $order_states[$name]->weight = $data->weight;
+      $order_states[$name]->default_status = $data->default_status;
+      $order_states[$name]->saved = TRUE;
+    }
+
+    // Give other modules a chance to alter the order states.
+    drupal_alter('commerce_order_state_info', $order_states);
+
+    uasort($order_states, 'commerce_sort_weight');
+  }
+
+  return $order_states;
+}
+
+/**
+ * Resets the cached list of order statuses.
+ */
+function commerce_order_states_reset() {
+  $order_statuses = &drupal_static('commerce_order_statuses');
+  $order_statuses = NULL;
+}
+
+/**
+ * Saves the configuration of an order state.
+ *
+ * @param $order_state
+ *   The fully loaded order state object.
+ *
+ * @return
+ *   The return value of the call to drupal_write_record() to save the order
+ *     state, either FALSE on failure or SAVED_NEW or SAVED_UPDATED indicating
+ *     the type of query performed to save the order state.
+ */
+function commerce_order_state_save($order_state) {
+  return drupal_write_record('commerce_order_state', $order_state, empty($order_state->saved) ? 'name' : array());
+}
+
+/**
+ * Returns an order state object.
+ *
+ * @param $name
+ *   The machine readable name string of the state to return.
+ *
+ * @return
+ *   The fully loaded state object or FALSE if not found.
+ */
+function commerce_order_state_load($name) {
+  $order_states = commerce_order_states();
+
+  if (isset($order_states[$name])) {
+    return $order_states[$name];
+  }
+
+  return FALSE;
+}
+
+/**
+ * Resets an order state by name to its module defined defaults.
+ */
+function commerce_order_state_reset($name) {
+  db_delete('commerce_order_state')
+    ->condition('name', $name)
+    ->execute();
+}
+
+/**
+ * Returns the human readable title of any or all order states.
+ *
+ * @param $name
+ *   Optional parameter specifying the status_id of the order status whose title
+ *     to return.
+ *
+ * @return
+ *   Either an array of all order status titles keyed by the status_id or a
+ *     string containing the human readable title for the specified status. If a
+ *     status is specified that does not exist, this function returns FALSE.
+ */
+function commerce_order_state_get_title($name = NULL) {
+  $order_states = commerce_order_states();
+
+  // Return a state title if specified and it exists.
+  if (!empty($name)) {
+    if (isset($order_states[$name])) {
+      return $order_states[$name]->title;
+    }
+    else {
+      // Return FALSE if it does not exist.
+      return FALSE;
+    }
+  }
+
+  // Otherwise turn the array values into the status title only.
+  foreach ($order_states as $key => $value) {
+    $order_states[$key] = $value->title;
+  }
+
+  return $order_states;
+}
+
+/**
+ * Returns an array of some or all of the order statuses keyed by name.
+ *
+ * Order statuses can only be defined by modules but may have settings
+ * overridden that are stored in the database (weight and status). When this
+ * function is first called, it will load all the statuses as defined by
+ * hook_commerce_order_status_info() and update them based on the data in the
+ * database. The final array will be cached for subsequent calls.
+ *
+ * @param $conditions
+ *   An array of conditions to filter the returned list by; for example, if you
+ *     specify 'state' => 'cart' in the array, then only order statuses in the
+ *     cart state would be included.
+ *
+ * @return
+ *   The array of order status objects, keyed by status name.
+ */
+function commerce_order_statuses($conditions = array()) {
+  // First check the static cache for an order statuses array.
+  $order_statuses = &drupal_static(__FUNCTION__);
+
+  // If it did not exist, fetch the statuses now.
+  if (!isset($order_statuses)) {
+    $order_statuses = module_invoke_all('commerce_order_status_info');
+
+    $saved_statuses = db_query('SELECT * FROM {commerce_order_status}')->fetchAllAssoc('name');
+
+    foreach ((array) $saved_statuses as $name => $data) {
+      $order_statuses[$name]->weight = $data->weight;
+      $order_statuses[$name]->status = $data->status;
+      $order_statuses[$name]->saved = TRUE;
+    }
+
+    // Merge in defaults.
+    foreach ($order_statuses as $name => $order_status) {
+      // Set some defaults for the checkout pane.
+      $defaults = array(
+        'cart' => FALSE,
+        'weight' => 0,
+        'status' => 1,
+      );
+      $order_status = (object) array_merge($defaults, (array) $order_status);
+
+      $order_statuses[$name] = $order_status;
+    }
+
+    // Give other modules a chance to alter the order statuses.
+    drupal_alter('commerce_order_status_info', $order_statuses);
+
+    uasort($order_statuses, 'commerce_sort_weight');
+  }
+
+  // Apply conditions to the returned statuses if specified.
+  if (!empty($conditions)) {
+    $matching_statuses = array();
+
+    foreach ($order_statuses as $name => $order_status) {
+      // Check the status against the conditions array to determine whether to
+      // add it to the return array or not.
+      $valid = TRUE;
+
+      foreach ($conditions as $property => $value) {
+        // If the current value for the specified property on the pane does not
+        // match the filter value...
+        if ($order_status->{$property} != $value) {
+          // Do not add it to the temporary array.
+          $valid = FALSE;
+        }
+      }
+
+      if ($valid) {
+        $matching_statuses[$name] = $order_status;
+      }
+    }
+
+    return $matching_statuses;
+  }
+
+  return $order_statuses;
+}
+
+/**
+ * Resets the cached list of order statuses.
+ */
+function commerce_order_statuses_reset() {
+  $order_statuses = &drupal_static('commerce_order_statuses');
+  $order_statuses = NULL;
+}
+
+/**
+ * Saves the configuration of an order status.
+ *
+ * @param $order_status
+ *   The fully loaded order status object.
+ *
+ * @return
+ *   The return value of the call to drupal_write_record() to save the order
+ *     status, either FALSE on failure or SAVED_NEW or SAVED_UPDATED indicating
+ *     the type of query performed to save the order status.
+ */
+function commerce_order_status_save($order_status) {
+  return drupal_write_record('commerce_order_status', $order_status, empty($order_status->saved) ? 'name' : array());
+}
+
+/**
+ * Returns an order status object.
+ *
+ * @param $name
+ *   The machine readable name string of the status to return.
+ *
+ * @return
+ *   The fully loaded status object or FALSE if not found.
+ */
+function commerce_order_status_load($name) {
+  $order_statuses = commerce_order_statuses();
+
+  if (isset($order_statuses[$name])) {
+    return $order_statuses[$name];
+  }
+
+  return FALSE;
+}
+
+/**
+ * Resets an order status by name to its module defined defaults.
+ */
+function commerce_order_status_reset($name) {
+  db_delete('commerce_order_status')
+    ->condition('name', $name)
+    ->execute();
+}
+
+/**
+ * Returns the human readable title of any or all order statuses.
+ *
+ * @param $name
+ *   Optional parameter specifying the name of the order status whose title
+ *     to return.
+ *
+ * @return
+ *   Either an array of all order status titles keyed by the status_id or a
+ *     string containing the human readable title for the specified status. If a
+ *     status is specified that does not exist, this function returns FALSE.
+ */
+function commerce_order_status_get_title($name = NULL) {
+  $order_statuses = commerce_order_statuses();
+
+  // Return a status title if specified and it exists.
+  if (!empty($name)) {
+    if (isset($order_statuses[$name])) {
+      return $order_statuses[$name]->title;
+    }
+    else {
+      // Return FALSE if it does not exist.
+      return FALSE;
+    }
+  }
+
+  // Otherwise turn the array values into the status title only.
+  foreach ($order_statuses as $key => $value) {
+    $order_statuses[$key] = $value->title;
+  }
+
+  return $order_statuses;
+}
+
+/**
+ * Updates the status of an order to the specified status.
+ *
+ * @param $order
+ *   The fully loaded order object to update.
+ * @param $name
+ *   The machine readable name string of the status to update to.
+ *
+ * @return
+ *   The updated order.
+ */
+function commerce_order_status_update($order, $name) {
+  $new_order = clone($order);
+
+  // Do not update the status if the order is already at it.
+  if ($new_order->status != $name) {
+    $new_order->status = $name;
+
+    // TODO: Alert modules via a hook / Rules that the order was updated.
+
+    $new_order = commerce_order_save($new_order);
+  }
+
+  return $new_order;
+}
+
+/**
+ * Ensures the line item field is present on the default order bundle.
+ */
+function commerce_order_configure_order_type($type = 'commerce_order') {
+  $field = field_info_field('line_items');
+  $instance = field_info_instance('commerce_order', 'line_items', $type);
+
+  if (empty($field)) {
+    $field = array(
+      'field_name' => 'line_items',
+      'type' => 'commerce_line_item_reference',
+      'cardinality' => FIELD_CARDINALITY_UNLIMITED,
+      'entity_types' => array('commerce_order'),
+      'translatable' => FALSE,
+      'locked' => TRUE,
+    );
+    $field = field_create_field($field);
+  }
+
+  if (empty($instance)) {
+    $instance = array(
+      'field_name' => 'line_items',
+      'entity_type' => 'commerce_order',
+      'bundle' => $type,
+      'label' => t('Line items'),
+      'widget' => array(
+        'type' => 'commerce_line_item_manager',
+        'weight' => -10,
+      ),
+      'settings' => array(),
+
+      // Define default formatters for the teaser and full view.
+      'display' => array(
+        'customer' => array(
+          'label' => 'above',
+          'type' => 'commerce_line_item_reference_view',
+        ),
+        'administrator' => array(
+          'label' => 'above',
+          'type' => 'commerce_line_item_reference_view',
+        ),
+      ),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Callback for getting order properties.
+ * @see commerce_order_entity_property_info()
+ */
+function commerce_order_get_properties($order, array $options, $name) {
+  switch ($name) {
+    case 'creator':
+      return $order->creator_uid;
+    case 'customer':
+      return $order->customer_uid;
+    case 'view-url':
+      return url('order/' . $order->order_id, $options);
+    case 'admin-url':
+      return url('admin/commerce/orders/' . $order->order_id, $options);
+    case 'edit-url':
+      return url('admin/commerce/orders/' . $order->order_id . '/edit', $options);
+  }
+}
+
+/**
+ * Callback for setting order properties.
+ * @see commerce_order_entity_property_info()
+ */
+function commerce_order_set_properties($order, $name, $value) {
+  if ($name == 'creator') {
+    $order->creator_uid = $value;
+  }
+  elseif ($name == 'customer') {
+    $order->customer_uid = $value;
+  }
+}
+
+/**
+ * Handler to load the unchanged order variable for rules.
+ * @see commerce_order_rules_variables().
+ */
+function commerce_order_rules_var_unchanged($order) {
+  $unchanged = drupal_static('commerce_order_unchanged');
+
+  if (isset($order->order_id) && isset($unchanged[$order->order_id])) {
+    return $unchanged[$order->order_id];
+  }
+}

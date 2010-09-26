@@ -1,0 +1,57 @@
+/* $Id: commerce_checkout.css,v 1.7 2010/07/12 13:17:35 rszrama Exp $ */
+
+fieldset.checkout-buttons {
+  text-align: right;
+}
+
+fieldset.checkout-buttons .form-button, fieldset.checkout-buttons .form-submit {
+  margin-left: 1em;
+}
+
+fieldset.checkout-buttons .checkout-cancel, fieldset.checkout-buttons .checkout-back {
+  float: left;
+}
+
+table.checkout-review {
+  width: auto;
+  margin-left: auto;
+  margin-right: auto;
+  min-width: 40%;
+}
+
+fieldset.checkout-buttons.review {
+  width: 40%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+table.checkout-review .pane-title td {
+  font-weight: bold;
+  text-align: center;
+}
+
+table.checkout-review tr.pane-data {
+  vertical-align: top;
+}
+
+table.checkout-review .pane-data-key {
+  font-weight: bold;
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 3em;
+  width: 50%;
+}
+
+table.checkout-review .pane-data-value {
+  padding-right: 3em;
+}
+
+table.checkout-review .pane-data-full {
+  padding-left: 1em;
+  padding-right: 1em;
+}
+
+.checkout-processing {
+  padding-right: 18px !important;
+  background: url(../images/status-active.gif) right center no-repeat;
+}

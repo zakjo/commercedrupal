@@ -1,0 +1,248 @@
+<?php
+// $Id: commerce_order.install,v 1.10 2010/09/20 10:45:35 rszrama Exp $
+
+/**
+ * Implements hook_schema().
+ */
+function commerce_order_schema() {
+  $schema = array();
+
+  $schema['commerce_order'] = array(
+    'description' => 'The base table for orders.',
+    'fields' => array(
+      'order_id' => array(
+        'description' => 'The primary identifier for an order.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'order_number' => array(
+        'description' => 'The order number displayed to the customer.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'revision_id' => array(
+        'description' => 'The current {commerce_order_revision}.revision_id version identifier.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'creator_uid' => array(
+        'description' => 'The {users}.uid that created this order.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'customer_uid' => array(
+        'description' => 'The {users}.uid that placed this order.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'mail' => array(
+        'description' => 'The e-mail address associated with the order.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'status' => array(
+        'description' => 'The {commerce_order_status}.name of this order.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp when the order was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'changed' => array(
+        'description' => 'The Unix timestamp when the order was most recently saved.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'data' => array(
+        'type' => 'blob',
+        'not null' => FALSE,
+        'size' => 'big',
+        'serialize' => TRUE,
+        'description' => 'A serialized array of additional data.',
+      ),
+    ),
+    'primary key' => array('order_id'),
+    'unique keys' => array(
+      'order_number' => array('order_number'),
+      'revision_id' => array('revision_id'),
+    ),
+    'foreign keys' => array(
+      'current_revision' => array(
+        'table' => 'commerce_order_revision',
+        'columns'=> array('revision_id' => 'revision_id'),
+      ),
+      'creator' => array(
+        'table' => 'users',
+        'columns' => array('creator_uid' => 'uid'),
+      ),
+      'customer' => array(
+        'table' => 'users',
+        'columns' => array('customer_uid' => 'uid'),
+      ),
+      'status' => array(
+        'table' => 'commerce_order_status',
+        'columns' => array('status' => 'name'),
+      ),
+    ),
+  );
+
+  $schema['commerce_order_revision'] = array(
+    'description' => 'Saves information about each saved revision of a {commerce_order}.',
+    'fields' => array(
+      'order_id' => array(
+        'description' => 'The {commerce_order}.order_id of the order this revision belongs to.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'order_number' => array(
+        'description' => 'The order number displayed to the customer for this revision.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'revision_id' => array(
+        'description' => 'The primary identifier for this revision.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'creator_uid' => array(
+        'description' => 'The {users}.uid that created this order at this revision.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'customer_uid' => array(
+        'description' => 'The {users}.uid that placed this order saved at this revision.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'mail' => array(
+        'description' => 'The e-mail address associated with the order at this revision.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'status' => array(
+        'description' => 'The {commerce_order_status}.name of this revision.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+      ),
+      'log' => array(
+        'description' => 'The log entry explaining the changes in this version.',
+        'type' => 'text',
+        'not null' => TRUE,
+        'size' => 'big',
+      ),
+      'revision_timestamp' => array(
+        'description' => 'The Unix timestamp when this revision was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'data' => array(
+        'type' => 'blob',
+        'not null' => FALSE,
+        'size' => 'big',
+        'serialize' => TRUE,
+        'description' => 'A serialized array of additional data.',
+      ),
+    ),
+    'primary key' => array('revision_id'),
+    'foreign keys' => array(
+      'order' => array(
+        'table' => 'commerce_order',
+        'columns'=> array('order_id' => 'order_id'),
+      ),
+      'creator' => array(
+        'table' => 'users',
+        'columns' => array('creator_uid' => 'uid'),
+      ),
+      'customer' => array(
+        'table' => 'users',
+        'columns' => array('customer_uid' => 'uid'),
+      ),
+      'status' => array(
+        'table' => 'commerce_order_status',
+        'columns' => array('status' => 'name'),
+      ),
+    ),
+  );
+
+  $schema['commerce_order_state'] = array(
+    'description' => 'Order state configuration data.',
+    'fields' => array(
+      'name' => array(
+        'description' => 'The machine readable name of the order state.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'default_status' => array(
+        'description' => 'The name of the default order status for this state.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'weight' => array(
+        'description' => 'The sorting weight of the status for lists of statuses.',
+        'type' => 'int',
+        'size' => 'small',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('name'),
+    'foreign keys' => array(
+      'default_status' => array(
+        'table' => 'commerce_order_status',
+        'columns' => array('default_status' => 'name'),
+      ),
+    ),
+  );
+
+  $schema['commerce_order_status'] = array(
+    'description' => 'Order status configuration data.',
+    'fields' => array(
+      'name' => array(
+        'description' => 'The machine readable name of the order status.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'weight' => array(
+        'description' => 'The sorting weight of the status for lists of statuses.',
+        'type' => 'int',
+        'size' => 'small',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'status' => array(
+        'description' => 'Boolean value indicating whether or not the order status is active.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 1,
+      ),
+    ),
+    'primary key' => array('name'),
+  );
+
+  return $schema;
+}

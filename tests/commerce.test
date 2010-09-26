@@ -1,0 +1,24 @@
+<?php
+// $Id: commerce.test,v 1.6 2010/09/20 10:46:41 rszrama Exp $
+
+/**
+ * @file
+ * Defines tests for the Commerce module.
+ */
+
+/**
+ * Tests for commerce.module
+ */
+class CommerceTestCase extends CommerceBaseTestCase {
+  /**
+   * getInfo() returns properties that are displayed in the test selection form.
+   */
+  public static function getInfo() {
+    return array(
+      'name' => t('Commerce module'),
+      'description' => t('Tests the basic functionality of Commerce module'),
+      'group' => t('Drupal Commerce'),
+    );
+  }
+
+}

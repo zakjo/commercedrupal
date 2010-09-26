@@ -1,0 +1,5 @@
+/* $Id: commerce_customer_ui.profile_types.css,v 1.1 2010/08/20 23:15:12 rszrama Exp $ */
+
+.links.operations {
+  text-transform: lowercase;
+}

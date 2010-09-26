@@ -1,0 +1,6 @@
+/* $Id: commerce_price.css,v 1.1 2010/06/03 18:02:00 rszrama Exp $ */
+
+.commerce-price-full .form-item {
+  display: inline;
+  margin-right: 1em;
+}

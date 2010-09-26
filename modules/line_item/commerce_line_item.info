@@ -1,0 +1,25 @@
+; $Id: commerce_line_item.info,v 1.11 2010/08/24 00:30:49 rszrama Exp $
+name = Line Item
+description = Defines the Line Item entity and associated features.
+package = Drupal Commerce
+dependencies[] = rules
+dependencies[] = commerce_price
+core = 7.x
+
+; Base module files
+files[] = commerce_line_item.module
+files[] = commerce_line_item.install
+
+; Module includes
+files[] = includes/commerce_line_item.controller.inc
+
+; Views include
+files[] = includes/views/commerce_line_item.views.inc
+files[] = includes/views/commerce_line_item.views_default.inc
+files[] = includes/views/handlers/commerce_line_item_handler_area_line_item_summary.inc
+files[] = includes/views/handlers/commerce_line_item_handler_argument_line_item_line_item_id.inc
+files[] = includes/views/handlers/commerce_line_item_handler_field_line_item_type.inc
+files[] = includes/views/handlers/commerce_line_item_handler_filter_line_item_type.inc
+
+; Simple tests
+; files[] = tests/commerce_line_item.test

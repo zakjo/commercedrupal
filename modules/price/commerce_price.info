@@ -1,0 +1,9 @@
+; $Id: commerce_price.info,v 1.10 2010/06/03 18:08:21 rszrama Exp $
+name = Price
+description = Defines the price field and a price alteration system.
+package = Drupal Commerce
+dependencies[] = commerce
+core = 7.x
+
+; Base module files
+files[] = commerce_price.module

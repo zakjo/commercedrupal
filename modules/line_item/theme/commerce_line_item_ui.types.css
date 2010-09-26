@@ -1,0 +1,5 @@
+/* $Id: commerce_line_item_ui.types.css,v 1.2 2010/05/20 04:08:50 rszrama Exp $ */
+
+.links.operations {
+  text-transform: lowercase;
+}

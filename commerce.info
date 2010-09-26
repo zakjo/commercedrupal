@@ -1,0 +1,11 @@
+; $Id: commerce.info,v 1.13 2010/09/20 10:46:05 rszrama Exp $
+name = Commerce
+description = Defines features and functions common to the Commerce modules.
+package = Drupal Commerce
+core = 7.x
+
+; Base module files
+files[] = commerce.module
+; Tests
+files[] = tests/commerce_base.test
+files[] = tests/commerce.test
